@@ -127,14 +127,54 @@ def find_airline(text):
     m = difflib.get_close_matches(t, list(names), n=1, cutoff=0.62)
     return names[m[0]] if m else None
 
-_os = {"ts": 0, "states": []}
+import os
+
+_os = {"ts": 0, "token": None, "token_exp": 0, "states": []}
+
+async def _get_opensky_token(client):
+    if time.time() < _os["token_exp"] - 30 and _os["token"]:
+        return _os["token"]
+    
+    client_id = os.getenv("OPENSKY_CLIENT_ID")
+    client_secret = os.getenv("OPENSKY_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        return None  
+
+    response = await client.post(
+        "https://opensky-network.org/api/auth/token",
+        data={
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+    )
+    if response.status_code == 200:
+        data = response.json()
+        _os["token"] = data.get("access_token")
+        _os["token_exp"] = time.time() + data.get("expires_in", 1800)
+        return _os["token"]
+    return None
+
 async def _opensky():
-    if time.time() - _os["ts"] < 45 and _os["states"]: return _os["states"]
-    async with httpx.AsyncClient(timeout=30, headers=UA) as c:
-        r = await c.get("https://opensky-network.org/api/states/all")
-    if r.status_code == 429: raise ValueError("Live flight data is rate-limited right now. Try again in a minute.")
-    if r.status_code != 200: raise ValueError("The live flight data service did not respond.")
-    _os["states"] = r.json().get("states") or []; _os["ts"] = time.time()
+    if time.time() - _os["ts"] < 45 and _os["states"]: 
+        return _os["states"]
+        
+    async with httpx.AsyncClient(timeout=30) as c:
+        token = await _get_opensky_token(c)
+        headers = {}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            
+        r = await c.get("https://opensky-network.org/api/states/all", headers=headers)
+        
+    if r.status_code == 429: 
+        raise ValueError("Live flight data is rate-limited right now. Try again in a minute.")
+    if r.status_code != 200: 
+        raise ValueError(f"The live flight data service did not respond (Status {r.status_code}).")
+        
+    _os["states"] = r.json().get("states") or []
+    _os["ts"] = time.time()
     return _os["states"]
 
 async def _hexdb(icao24):
