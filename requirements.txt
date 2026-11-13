@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+aiogram>=3.13
+httpx
+dnspython
+phonenumbers
+Pillow
+pyzbar
+pytesseract
